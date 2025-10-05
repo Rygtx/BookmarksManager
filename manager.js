@@ -607,6 +607,16 @@ function handleMenuItemClick(e) {
             }
             break;
             
+        case 'jumpOtherSide':
+            if (bookmarkItem) {
+                const originContainer = bookmarkItem.closest('.tree-container');
+                const isLeft = originContainer?.id === 'leftBookmarks';
+                jumpToOtherSide(bookmarkItem, isLeft);
+            } else {
+                showToast('请在具体项目上使用该功能', 'warning');
+            }
+            break;
+
         case 'copyUrl':
             const bookmarkTitle = bookmarkItem?.querySelector('.bookmark-title');
             if (bookmarkTitle) {
@@ -1175,58 +1185,315 @@ function navigateToBookmark(container, title, path) {
 
 // 修改 jumpToOtherSide 函数
 function jumpToOtherSide(bookmarkItem, isLeftContainer) {
-    console.log('准备跳转到另一侧相同位置');
-    
-    const targetContainer = document.getElementById(isLeftContainer ? 'rightBookmarks' : 'leftBookmarks');
-    const sourceTitle = bookmarkItem.querySelector('.bookmark-title')?.textContent;
-    const sourcePath = getBookmarkPath(bookmarkItem);
-    
-    console.log('源书签路径:', sourcePath);
-    console.log('源书签标题:', sourceTitle);
-    
-    if (!sourceTitle) {
-        console.log('未找到源书签标题');
-        showToast('无法定位目标书签');
+    if (!bookmarkItem) {
+        showToast('无法定位跳转目标', 'warning');
         return;
     }
 
-    // 尝试精确匹配跳转
-    const found = navigateToBookmarkBase(targetContainer, sourceTitle, sourcePath.join(' > '), {
-        animationDuration: 5000
-    });
+    const targetContainerId = isLeftContainer ? 'rightBookmarks' : 'leftBookmarks';
+    const targetContainer = document.getElementById(targetContainerId);
+    if (!targetContainer) {
+        console.warn('未找到目标面板:', targetContainerId);
+        showToast('未找到另一侧的书签面板', 'warning');
+        return;
+    }
 
-    // 如果没有找到精确匹配，尝试相对位置跳转
-    if (!found) {
-        console.log('未找到匹配的目标书签，尝试跳转到相应位置');
-        
-        // 计算源书签在其容器中的相对位置
-        const sourceContainer = bookmarkItem.closest('.tree-container');
-        const sourceItems = Array.from(sourceContainer.querySelectorAll('.bookmark-item'));
-        const sourceIndex = sourceItems.indexOf(bookmarkItem);
-        const sourcePercentage = sourceIndex / sourceItems.length;
-        
-        // 获取目标容器中的所有书签项
-        const targetItems = Array.from(targetContainer.querySelectorAll('.bookmark-item'));
-        if (targetItems.length > 0) {
-            // 计算目标位置
-            const targetIndex = Math.floor(sourcePercentage * targetItems.length);
-            const targetItem = targetItems[targetIndex];
-            
-            // 滚动到目标位置
-            targetItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            targetItem.classList.add('current-diff');
-            setTimeout(() => {
-                targetItem.classList.remove('current-diff');
-            }, 5000);
-            
-            showToast('已跳转到相对位置');
-        } else {
-            showToast('目标侧没有书签');
-        }
+    const meta = collectBookmarkMeta(bookmarkItem);
+    if (!meta) {
+        console.warn('无法提取当前节点的元数据');
+        showToast('无法解析当前项目，无法跳转', 'warning');
+        return;
+    }
+
+    const counterpart = findCounterpartInContainer(targetContainer, meta);
+
+    if (counterpart) {
+        setActiveContainer(targetContainer);
+        focusOnBookmarkItem(counterpart);
+        showToast('已跳转到另一侧的对应项目');
+        return;
+    }
+
+    const siblingFallback = findNearestSiblingInSameFolder(targetContainer, meta);
+    if (siblingFallback) {
+        setActiveContainer(targetContainer);
+        focusOnBookmarkItem(siblingFallback);
+        showToast('未找到完全匹配，已定位到同文件夹的相邻项目', 'warning');
+        return;
+    }
+
+    if (scrollToRelativePosition(bookmarkItem, targetContainer)) {
+        setActiveContainer(targetContainer);
+        showToast('未找到完全匹配，已定位到大致位置', 'warning');
     } else {
-        showToast('已跳转到目标位置');
+        showToast('另一侧没有可跳转的项目', 'warning');
     }
 }
+
+function collectBookmarkMeta(bookmarkItem) {
+    const path = getBookmarkPath(bookmarkItem);
+    if (!path.length) {
+        return null;
+    }
+
+    const isFolder = bookmarkItem.querySelector('.folder') !== null;
+    if (isFolder) {
+        const titleElement = bookmarkItem.querySelector('.folder-title');
+        if (!titleElement) {
+            return null;
+        }
+
+        return {
+            isFolder: true,
+            title: normalizeTitle(titleElement.textContent),
+            path
+        };
+    }
+
+    const titleElement = bookmarkItem.querySelector('.bookmark-title');
+    if (!titleElement) {
+        return null;
+    }
+
+    return {
+        isFolder: false,
+        title: normalizeTitle(titleElement.textContent),
+        url: titleElement.dataset?.url || '',
+        path
+    };
+}
+
+function normalizeTitle(text) {
+    return (text || '').replace(/\(\d+\)$/, '').trim();
+}
+
+function findCounterpartInContainer(container, meta) {
+    const items = Array.from(container.querySelectorAll('.bookmark-item'));
+    if (!items.length) {
+        return null;
+    }
+
+    const sameTypeItems = items.filter(item => {
+        const isFolder = item.querySelector('.folder') !== null;
+        return isFolder === meta.isFolder;
+    });
+
+    if (!sameTypeItems.length) {
+        return null;
+    }
+
+    const exactPathItem = sameTypeItems.find(item => arraysEqual(getBookmarkPath(item), meta.path));
+    if (exactPathItem) {
+        return exactPathItem;
+    }
+
+    if (!meta.isFolder && meta.url) {
+        const urlMatches = sameTypeItems.filter(item => {
+            const titleElement = item.querySelector('.bookmark-title');
+            return titleElement && (titleElement.dataset?.url || '') === meta.url;
+        });
+
+        if (urlMatches.length === 1) {
+            return urlMatches[0];
+        }
+
+        if (urlMatches.length > 1) {
+            const bestUrlMatch = pickBestCounterpart(urlMatches, meta);
+            if (bestUrlMatch) {
+                return bestUrlMatch;
+            }
+        }
+    }
+
+    return pickBestCounterpart(sameTypeItems, meta);
+}
+
+function findNearestSiblingInSameFolder(container, meta) {
+    const parentPath = meta.path.slice(0, -1);
+    let siblingItems = [];
+
+    if (parentPath.length === 0) {
+        siblingItems = Array.from(container.children).filter(child => child.classList && child.classList.contains('bookmark-item'));
+    } else {
+        const folderCandidates = Array.from(container.querySelectorAll('.bookmark-item')).filter(item => item.querySelector('.folder') !== null);
+        const parentFolder = folderCandidates.find(item => arraysEqual(getBookmarkPath(item), parentPath));
+        if (parentFolder) {
+            const childrenContainer = parentFolder.querySelector('.folder-children');
+            if (childrenContainer) {
+                siblingItems = Array.from(childrenContainer.children).filter(child => child.classList && child.classList.contains('bookmark-item'));
+            }
+        }
+    }
+
+    if (!siblingItems.length) {
+        return null;
+    }
+
+    const sameTypeSiblings = siblingItems.filter(item => {
+        const isFolder = item.querySelector('.folder') !== null;
+        return isFolder === meta.isFolder;
+    });
+
+    const candidates = sameTypeSiblings.length ? sameTypeSiblings : siblingItems;
+    return pickBestCounterpart(candidates, meta, 0);
+}
+
+
+function pickBestCounterpart(items, meta, minScore = 30) {
+    let bestItem = null;
+    let bestScore = -1;
+
+    items.forEach(item => {
+        const path = getBookmarkPath(item);
+        const titleElement = meta.isFolder ?
+            item.querySelector('.folder-title') :
+            item.querySelector('.bookmark-title');
+
+        if (!titleElement) {
+            return;
+        }
+
+        const candidateTitle = normalizeTitle(titleElement.textContent);
+        let score = 0;
+
+        if (!meta.isFolder) {
+            const candidateUrl = titleElement.dataset?.url || '';
+            if (meta.url && candidateUrl === meta.url) {
+                score += 80;
+            }
+        }
+
+        if (candidateTitle === meta.title) {
+            score += 30;
+        }
+
+        const commonPrefix = getCommonPathPrefixLength(path, meta.path);
+        score += commonPrefix * 5;
+
+        if (arraysEqual(path, meta.path)) {
+            score += 200;
+        } else if (path.length === meta.path.length) {
+            score += 5;
+        }
+
+        if (score > bestScore) {
+            bestScore = score;
+            bestItem = item;
+        }
+    });
+
+    return bestScore >= minScore ? bestItem : null;
+}
+
+function getCommonPathPrefixLength(a, b) {
+    const length = Math.min(a.length, b.length);
+    let count = 0;
+    for (let i = 0; i < length; i++) {
+        if (a[i] !== b[i]) {
+            break;
+        }
+        count++;
+    }
+    return count;
+}
+
+function arraysEqual(a, b) {
+    if (a.length !== b.length) {
+        return false;
+    }
+    for (let i = 0; i < a.length; i++) {
+        if (a[i] !== b[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function focusOnBookmarkItem(targetItem) {
+    if (!targetItem) {
+        return;
+    }
+
+    let parent = targetItem.parentElement;
+    while (parent && !parent.classList.contains('tree-container')) {
+        if (parent.classList.contains('folder-children')) {
+            parent.style.display = 'block';
+            const folderItem = parent.closest('.bookmark-item');
+            if (folderItem) {
+                folderItem.classList.add('expanded');
+                const expandIcon = folderItem.querySelector('.expand-icon');
+                if (expandIcon) {
+                    expandIcon.style.transform = 'rotate(90deg)';
+                }
+                const folderIcon = folderItem.querySelector('.folder-icon');
+                if (folderIcon) {
+                    folderIcon.textContent = '\u{1F4C2}';
+                }
+            }
+        }
+        parent = parent.parentElement;
+    }
+
+    document.querySelectorAll('.bookmark.selected, .folder.selected').forEach(el => {
+        el.classList.remove('selected');
+    });
+
+    const focusTarget = targetItem.querySelector('.bookmark') || targetItem.querySelector('.folder');
+    if (focusTarget) {
+        focusTarget.classList.add('selected');
+    }
+
+    const container = targetItem.closest('.tree-container');
+    requestAnimationFrame(() => {
+        if (container) {
+            const containerRect = container.getBoundingClientRect();
+            const itemRect = targetItem.getBoundingClientRect();
+            const offset = itemRect.top - containerRect.top - (containerRect.height / 2) + (itemRect.height / 2);
+            container.scrollTo({
+                top: container.scrollTop + offset,
+                behavior: 'smooth'
+            });
+        } else {
+            targetItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+
+        targetItem.classList.add('current-diff');
+        setTimeout(() => {
+            targetItem.classList.remove('current-diff');
+        }, 3000);
+    });
+}
+
+function scrollToRelativePosition(sourceItem, targetContainer) {
+    const sourceContainer = sourceItem.closest('.tree-container');
+    if (!sourceContainer) {
+        return false;
+    }
+
+    const sourceItems = Array.from(sourceContainer.querySelectorAll('.bookmark-item'));
+    const targetItems = Array.from(targetContainer.querySelectorAll('.bookmark-item'));
+    if (!sourceItems.length || !targetItems.length) {
+        return false;
+    }
+
+    const sourceIndex = sourceItems.indexOf(sourceItem);
+    if (sourceIndex < 0) {
+        return false;
+    }
+
+    const sourceDenominator = Math.max(sourceItems.length - 1, 1);
+    const targetDenominator = Math.max(targetItems.length - 1, 0);
+    const ratio = sourceItems.length === 1 ? 0 : sourceIndex / sourceDenominator;
+    const targetIndex = Math.min(targetItems.length - 1, Math.round(ratio * targetDenominator));
+    const targetItem = targetItems[targetIndex];
+    if (!targetItem) {
+        return false;
+    }
+
+    focusOnBookmarkItem(targetItem);
+    return true;
+}
+
 
 // 处理文件导入
 async function handleFileImport(event, side) {
@@ -2554,6 +2821,16 @@ function handleMenuItemClick(e) {
             }
             break;
             
+        case 'jumpOtherSide':
+            if (bookmarkItem) {
+                const originContainer = bookmarkItem.closest('.tree-container');
+                const isLeft = originContainer?.id === 'leftBookmarks';
+                jumpToOtherSide(bookmarkItem, isLeft);
+            } else {
+                showToast('请在具体项目上使用该功能', 'warning');
+            }
+            break;
+
         case 'copyUrl':
             const bookmarkTitle = bookmarkItem?.querySelector('.bookmark-title');
             if (bookmarkTitle) {

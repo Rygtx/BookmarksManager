@@ -246,6 +246,45 @@ body {
     border-left: 1px dashed var(--border-color);
 }
 
+
+.bookmark-item.ghost-bookmark {
+    pointer-events: none;
+    opacity: 0.6;
+}
+
+.bookmark-item.ghost-bookmark .bookmark {
+    border: 1px dashed rgba(220, 38, 38, 0.45);
+    background: rgba(220, 38, 38, 0.08);
+    color: var(--danger-color);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.bookmark-item.ghost-bookmark .ghost-icon {
+    font-size: 12px;
+}
+
+.bookmark-item.ghost-bookmark .ghost-title {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.bookmark-item.ghost-bookmark .ghost-badge {
+    font-size: 12px;
+    padding: 2px 6px;
+    border-radius: 999px;
+    border: 1px solid rgba(220, 38, 38, 0.5);
+    background: rgba(220, 38, 38, 0.15);
+    color: var(--danger-color);
+}
+
+.bookmark-item.ghost-bookmark.ghost-added .bookmark {
+    border-style: dashed;
+}
+
 .bookmark {
     padding: 8px 12px;
     margin: 4px 0;

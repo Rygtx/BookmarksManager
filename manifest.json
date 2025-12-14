@@ -1,30 +1,18 @@
 {
   "manifest_version": 3,
-  "name": "书签管理器",
-  "version": "1.0",
-  "description": "强大的跨平台书签管理工具，支持多种格式的书签导入导出",
-  "permissions": [
-    "bookmarks",
-    "storage",
-    "tabs"
-  ],
+  "name": "书签对比助手",
+  "description": "在两份书签数据之间进行差异比对与整理的浏览器扩展。",
+  "version": "0.1.0",
   "action": {
-    "default_title": "书签管理器",
-    "default_icon": {
-      "16": "icons/icon16.png",
-      "48": "icons/icon48.png",
-      "128": "icons/icon128.png"
-    }
+    "default_title": "书签对比助手",
+    "default_popup": "src/ui/compare/index.html"
   },
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "src/background/serviceWorker.ts",
+    "type": "module"
   },
-  "icons": {
-    "16": "icons/icon16.png",
-    "48": "icons/icon48.png",
-    "128": "icons/icon128.png"
-  },
-  "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'"
-  }
-} 
+  "permissions": ["bookmarks", "storage", "downloads"],
+  "host_permissions": ["*://*/*"],
+  "icons": {},
+  "options_page": "src/ui/compare/index.html"
+}
